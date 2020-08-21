@@ -1,0 +1,7 @@
+Data/
+venv/
+__pycache__/
+batch_job.qsub
+preprocessing.py
+Starting.py
+Visualization_notes.py
