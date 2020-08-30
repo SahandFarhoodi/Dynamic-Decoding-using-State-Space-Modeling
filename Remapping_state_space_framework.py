@@ -89,7 +89,6 @@ class map_model:
         return self.name
 
 
-
 class response_model:
     # name: name of the state-transition model
     # h: length of history window (only for "Gamma_history_dependent model)
@@ -624,6 +623,8 @@ if mode == 'all':
     num = ncells  # number of cells that we work with
     cells_under_study = range(ncells)  # choosing cells to work with
 
+# Making State_model, Map_model and Response_model for each cell
+'''
 cell_models = dict()
 for cell_id in cells_under_study:
     print('cell_id = {}'.format(cell_id))
@@ -636,8 +637,9 @@ for cell_id in cells_under_study:
         # print('cell_id = {}, map_id = {}'.format(cell_id, cl))
         new_response_model.fit_models(cl, clusters[cl])
     cell_models[cell_id] = new_response_model
-
-np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '_morph_' + str(morph_lvl) + '.npy', cell_models)
+np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', cell_models)
+'''
+cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
 
 for cell_id in cell_models.keys():
     r_model = cell_models[cell_id]
