@@ -607,7 +607,6 @@ def decode_morphs(exp_id, p, mode, visualize, visualize2, history):
             X_tr = VRData[ind, :]
             X_tr = X_tr[:, 3]
             Y_tr = F[cell_id, ind]
-            plt.show()
             Y_hist_tr = compute_hist_cov(Y_tr, hist_wind)
             X_tr = X_tr[hist_wind:]
             Y_tr = Y_tr[hist_wind:]

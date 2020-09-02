@@ -84,6 +84,8 @@ class map_model:
     def set_state_model(self, new_state_model):
         self.state_model = new_state_model
         self.map_prob = 1/self.M * np.ones(shape=[self.state_model.E, self.M])
+    def set_map_prob(self, new_map_prob):
+        self.map_prob = new_map_prob
 
     def get_model(self):
         return self.name
@@ -93,8 +95,9 @@ class response_model:
     # name: name of the state-transition model
     # h: length of history window (only for "Gamma_history_dependent model)
     # map_model: the map model that this response model is build on top of that
-    def __init__(self, input_map_model, input_h):
+    def __init__(self, input_cell_id, input_map_model, input_h):
         self.name = "Gamma_history_dependent"
+        self.cell_id = input_cell_id
         self.h = input_h
         self.map_model = input_map_model
         self.observation_models = np.empty(shape=[self.map_model.M, ], dtype=object)  # params  ## Will be extended later
@@ -106,9 +109,17 @@ class response_model:
         Y_hist = np.array(1)
         first_tr = True
         for tr_id in tr_ids:
-            step = (max_pos - min_pos) / nbreaks
-            X_tr = np.arange(min_pos, max_pos, step) + step / 2
-            Y_tr = activity_rates_all_morphs[cell_id, :, tr_id]
+            # using disceretized data points:
+            # step = (max_pos - min_pos) / nbreaks
+            # X_tr = np.arange(min_pos, max_pos, step) + step / 2
+            # Y_tr = activity_rates_all_morphs[cell_id, :, tr_id]
+
+            # using actual data points:
+            ind = np.where(VRData[:, 20] == tr_id)[0]
+            X_tr = VRData[ind, :]
+            X_tr = X_tr[:, 3]
+            Y_tr = F[cell_id, ind]
+
             Y_hist_tr = compute_hist_cov(Y_tr, self.h)
             X_tr = X_tr[self.h:]
             Y_tr = Y_tr[self.h:]
@@ -145,6 +156,104 @@ class response_model:
         self.vis_observation_models[map_id] = [X, Y, Y_hist, spline_mat, des_mat, gamma_nohist_mu, gamma_nohist_v,
                                                gamma_nohist_params]
 
+    def decode_morph(self, debug):
+        trial_ids = range(ntrials)
+        for tr_id in trial_ids:
+            # print('computing likelihood for tr_id = {}'.format(tr_id))
+            ind = np.where(VRData[:, 20] == tr_id)[0]
+            X_tr = VRData[ind, :]
+            X_tr = X_tr[:, 3]
+            Y_tr = F[cell_id, ind]
+            Y_hist_tr = compute_hist_cov(Y_tr, self.h)
+            X_tr = X_tr[self.h:]
+            Y_tr = Y_tr[self.h:]
+            ll = np.zeros(shape=[self.map_model.M, X_tr.shape[0]])
+
+            for map_id in range(self.map_model.M):
+                # print('\t using map {}'.format(map_id))
+                # Recalling parameters from models fitted before:
+                obv_model = self.observation_models[map_id]
+                X_model = obv_model[0]
+                mu_model = obv_model[5]
+                spline_model = obv_model[3]
+                v_model = obv_model[6]
+                params_model = obv_model[7]
+
+                # compute likelihood
+                for i in range(X_tr.shape[0]):
+                    ind0 = find_nearest(X_model, [X_tr[i]])
+                    Y_hist_now = np.reshape(Y_hist_tr[i, :], newshape=[1, Y_hist_tr.shape[1]])
+                    inp = np.concatenate((spline_model[ind0, :], Y_hist_now), axis=1)
+                    mu_est = inp.dot(params_model)[0]
+                    mu_est = max(.1, mu_est)
+                    sd_est = mu_est / np.sqrt(v_model)
+                    ll[map_id, i] = -scipy.special.loggamma(v_model) + v_model * np.log(
+                        v_model * Y_tr[i] / mu_est) - v_model * Y_tr[i] / mu_est - np.log(Y_tr[i])
+
+
+            # Run filter algorithm
+            curr_E = self.map_model.state_model.E
+            filt = np.zeros(shape=[curr_E, self.map_model.M, self.map_model.M, X_tr.shape[0]])
+            p_morph_filt = np.zeros(shape=[curr_E, X_tr.shape[0]])
+            for i in range(X_tr.shape[0]):
+                for map0 in range(self.map_model.M):
+                    for map1 in range(self.map_model.M):
+                        if i == 0:
+                            filt[0, map0, map1, i] = self.map_model.map_prob[0, map0]
+                            filt[1, map1, map1, i] = self.map_model.map_prob[1, map1]
+                        else:
+                            L0 = np.exp(ll[map0, i])
+                            L1 = np.exp(ll[map1, i])
+                            qq = self.map_model.state_model.q
+                            filt[0, map0, map1, i] = L0 * ((1-qq)*filt[0, map0, map1, i-1] + qq*filt[1, map0, map1, i-1])
+                            filt[1, map0, map1, i] = L1 * (qq*filt[0, map0, map1, i-1] + (1-qq)*filt[1, map0, map1, i-1])
+                        # filt[:, map0, map1, i] = filt[:, map0, map1, i]/np.sum(filt[:, map0, map1, i])
+                filt[:, :, :, i] = filt[:, :, :, i] / np.sum(filt[:, :, :, i])  # Normalizing computed probabilities so they add to 1
+                p_morph_filt[0, i] = np.sum(filt[0, :, :, i])
+                p_morph_filt[1, i] = np.sum(filt[1, :, :, i])
+
+            # Run smoother algorithm
+            p_morph_smooth = np.zeros(shape=[2, X_tr.shape[0]])
+            for i in range(X_tr.shape[0] - 1, -1, -1):
+                if i == X_tr.shape[0] - 1:
+                    p_morph_smooth[0, i] = p_morph_filt[0, i]
+                    p_morph_smooth[1, i] = p_morph_filt[1, i]
+                if i < X_tr.shape[0] - 1:
+                    p_2step_0 = (1 - qq) * p_morph_filt[0, i] + qq * p_morph_filt[1, i]
+                    p_2step_1 = (1 - qq) * p_morph_filt[1, i] + qq * p_morph_filt[0, i]
+                    p_morph_smooth[0, i] = p_morph_filt[0, i] * (
+                            (1 - qq) * p_morph_smooth[0, i + 1] / p_2step_0 + qq * p_morph_smooth[1, i + 1] / p_2step_1)
+                    p_morph_smooth[1, i] = p_morph_filt[1, i] * (
+                            (1 - qq) * p_morph_smooth[1, i + 1] / p_2step_1 + qq * p_morph_smooth[0, i + 1] / p_2step_0)
+                    p_morph_smooth[:, i] = p_morph_smooth[:, i] / np.sum(p_morph_smooth[:, i])
+
+            if debug:
+                print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
+                for map0 in range(self.map_model.M):
+                    for map1 in range(self.map_model.M):
+                        print('map0={}, map1={}'.format(map0, map1))
+                        plt.subplot(4, 1, 1)
+                        map = self.vis_observation_models[map0]
+                        plt.plot(map[0], map[5], '.', label='map0')
+                        map = self.vis_observation_models[map1]
+                        plt.plot(map[0], map[5], '.', label='map1')
+                        plt.plot(X_tr, Y_tr, 'r,', label='observed')
+                        plt.legend()
+
+                        plt.subplot(4, 1, 2)
+                        plt.plot(X_tr, filt[0, map0, map1, :], label='spec map filter')
+                        plt.legend()
+
+                        plt.subplot(4, 1, 3)
+                        plt.plot(X_tr, p_morph_filt[0, :], label='filter')
+                        plt.legend()
+
+                        plt.subplot(4, 1, 4)
+                        plt.plot(X_tr, p_morph_smooth[0, :], label='smoother')
+                        plt.legend()
+                        plt.show()
+
+    # shows different maps
     def show_models(self):
         for map_id in range(self.map_model.M):
             map = self.vis_observation_models[map_id]
@@ -153,6 +262,17 @@ class response_model:
             # plt.plot(map[0], map[5]-2*map[5]/np.sqrt(map[6]), '.')
         plt.show()
 
+    # shows different maps and actual data points from env0 and env1 for each map
+    def show_models2(self):
+        for map_id in range(self.map_model.M):
+            print('percentage of env0 trials in this map = {}'.format(self.map_model.map_prob[0, map_id]))
+            map = self.vis_observation_models[map_id]
+            plt.plot(map[0], map[5], '.')
+            for tr_id in morph_0_trials:
+                plt.plot(activity_rates_all_morphs[self.cell_id, :, tr_id], 'r,')
+            for tr_id in morph_1_trials:
+                plt.plot(activity_rates_all_morphs[self.cell_id, :, tr_id], 'b,')
+            plt.show()
 
 def find_nearest(arr1, arr2):
     # For each element x of arr2, find the index of the closest element of arr1 to that.
@@ -407,9 +527,14 @@ def compute_M_single_cell(cell_id):
     # Using Louvain algorithm (throw away negative edges)
     partition = community_louvain.best_partition(G)
     clusters = dict()
+    rates = dict()  # shows the rate of env0 trials being assigned to each cluster
     for item in partition.items():
         tr_id = item[0]
         part = item[1]
+        if part not in rates.keys():
+            rates[part] = 0
+        if tr_id in morph_0_trials:
+            rates[part] = rates[part] + 1/morph_0_trials.shape[0]
         if part not in clusters.keys():
             clusters[part] = [tr_id]
         else:
@@ -469,7 +594,10 @@ def compute_M_single_cell(cell_id):
     plt.show()
     '''
 
-    return [num_clusters, clusters]
+    return [num_clusters, clusters, rates]
+
+
+# def decode_morphs(exp_id, cell_id, tr_id):
 
 ''' ------------------------------- Reading and cleaning data ------------------------------- '''
 
@@ -617,7 +745,7 @@ mode = 'short'  # Working with only a small subset of the cells (for debugging a
 # mode = 'all'  # Working with all of the cells
 
 if mode == 'short':
-    num = 5  # number of cells that we work with
+    num = 2  # number of cells that we work with
     cells_under_study = imp_diff_cells[:num, 0].astype(int)  # choosing cells to work with
 if mode == 'all':
     num = ncells  # number of cells that we work with
@@ -629,12 +757,18 @@ cell_models = dict()
 for cell_id in cells_under_study:
     print('cell_id = {}'.format(cell_id))
     new_state_model = state_model(input_E=2, input_q=0.35)
-    [M, clusters] = compute_M_single_cell(cell_id)
+    [M, clusters, rates] = compute_M_single_cell(cell_id)
     new_map_model = map_model(M, new_state_model)
-    print('M = {}'.format(new_map_model.M))
-    new_response_model = response_model(new_map_model, input_h=15)
+    new_map_prob = np.zeros(shape=[new_state_model.E, M])
+    for m in range(M):
+        new_map_prob[0, m] = rates[m]
+        new_map_prob[1, m] = 1-rates[m]
+    new_map_model.set_map_prob(new_map_prob)
+    new_response_model = response_model(cell_id, new_map_model, input_h=15)
+    print('clusters = {}'.format(clusters))
     for cl in clusters.keys():
         # print('cell_id = {}, map_id = {}'.format(cell_id, cl))
+        print(cl)
         new_response_model.fit_models(cl, clusters[cl])
     cell_models[cell_id] = new_response_model
 np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', cell_models)
@@ -644,7 +778,10 @@ cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(e
 for cell_id in cell_models.keys():
     r_model = cell_models[cell_id]
     print('cell_id: {}'.format(cell_id))
-    r_model.show_models()
+    obv = r_model.observation_models[0]
+    # r_model.show_models()
+    # r_model.show_models2()
+    r_model.decode_morph(debug=True)
 
 
 
