@@ -75,7 +75,7 @@ class map_model:
         self.M = input_M
         self.vals = np.arange(0, self.M)
         self.state_model = input_state_model
-        self.map_prob = 1 / self.M * np.ones(shape=[self.state_model.E, self.M])
+        self.map_prob = 1 / self.state_model.E * np.ones(shape=[self.state_model.E, self.M])
 
     def set_E(self, new_M):
         self.M = new_M
@@ -156,8 +156,9 @@ class response_model:
         self.vis_observation_models[map_id] = [X, Y, Y_hist, spline_mat, des_mat, gamma_nohist_mu, gamma_nohist_v,
                                                gamma_nohist_params]
 
-    def decode_morph(self, debug):
+    def decode_morph(self, debug1, debug2):
         trial_ids = range(ntrials)
+        trial_ids = morph_0_trials
         for tr_id in trial_ids:
             # print('computing likelihood for tr_id = {}'.format(tr_id))
             ind = np.where(VRData[:, 20] == tr_id)[0]
@@ -195,15 +196,16 @@ class response_model:
             curr_E = self.map_model.state_model.E
             filt = np.zeros(shape=[curr_E, self.map_model.M, self.map_model.M, X_tr.shape[0]])
             p_morph_filt = np.zeros(shape=[curr_E, X_tr.shape[0]])
+
             for i in range(X_tr.shape[0]):
                 for map0 in range(self.map_model.M):
                     for map1 in range(self.map_model.M):
+                        L0 = np.exp(ll[map0, i])
+                        L1 = np.exp(ll[map1, i])
                         if i == 0:
-                            filt[0, map0, map1, i] = self.map_model.map_prob[0, map0]
-                            filt[1, map1, map1, i] = self.map_model.map_prob[1, map1]
+                            filt[0, map0, map1, i] = self.map_model.map_prob[0, map0] * L0
+                            filt[1, map0, map1, i] = self.map_model.map_prob[1, map1] * L1
                         else:
-                            L0 = np.exp(ll[map0, i])
-                            L1 = np.exp(ll[map1, i])
                             qq = self.map_model.state_model.q
                             filt[0, map0, map1, i] = L0 * ((1-qq)*filt[0, map0, map1, i-1] + qq*filt[1, map0, map1, i-1])
                             filt[1, map0, map1, i] = L1 * (qq*filt[0, map0, map1, i-1] + (1-qq)*filt[1, map0, map1, i-1])
@@ -221,37 +223,148 @@ class response_model:
                 if i < X_tr.shape[0] - 1:
                     p_2step_0 = (1 - qq) * p_morph_filt[0, i] + qq * p_morph_filt[1, i]
                     p_2step_1 = (1 - qq) * p_morph_filt[1, i] + qq * p_morph_filt[0, i]
-                    p_morph_smooth[0, i] = p_morph_filt[0, i] * (
-                            (1 - qq) * p_morph_smooth[0, i + 1] / p_2step_0 + qq * p_morph_smooth[1, i + 1] / p_2step_1)
-                    p_morph_smooth[1, i] = p_morph_filt[1, i] * (
-                            (1 - qq) * p_morph_smooth[1, i + 1] / p_2step_1 + qq * p_morph_smooth[0, i + 1] / p_2step_0)
+                    p_morph_smooth[0, i] = p_morph_filt[0, i] * ((1 - qq) * p_morph_smooth[0, i+1] / p_2step_0 + qq * p_morph_smooth[1, i + 1] / p_2step_1)
+                    p_morph_smooth[1, i] = p_morph_filt[1, i] * ((1 - qq) * p_morph_smooth[1, i+1] / p_2step_1 + qq * p_morph_smooth[0, i + 1] / p_2step_0)
                     p_morph_smooth[:, i] = p_morph_smooth[:, i] / np.sum(p_morph_smooth[:, i])
 
-            if debug:
+            if debug1:
                 print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
                 for map0 in range(self.map_model.M):
                     for map1 in range(self.map_model.M):
                         print('map0={}, map1={}'.format(map0, map1))
-                        plt.subplot(4, 1, 1)
-                        map = self.vis_observation_models[map0]
-                        plt.plot(map[0], map[5], '.', label='map0')
-                        map = self.vis_observation_models[map1]
-                        plt.plot(map[0], map[5], '.', label='map1')
-                        plt.plot(X_tr, Y_tr, 'r,', label='observed')
+                        plt.subplot(5, 2, 1)
+                        map = self.observation_models[map0]
+                        plt.plot(map[0], map[5], '.', color=blue1)
+                        plt.plot(map[0], map[5] + 2*map[5]/np.sqrt(map[6]), '.', color=orange1)
+                        plt.plot(map[0], map[5] - 2*map[5]/np.sqrt(map[6]), '.', color=orange1)
+                        plt.plot(X_tr, Y_tr, 'r,')
+                        plt.xlim([min_pos, max_pos])
+                        plt.title('map = 0')
+                        plt.ylabel('fitted models')
+
+                        plt.subplot(5, 2, 2)
+                        map = self.observation_models[map1]
+                        plt.plot(map[0], map[5], '.', color=blue1)
+                        plt.plot(map[0], map[5] + 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                        plt.plot(map[0], map[5] - 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                        plt.plot(X_tr, Y_tr, 'r,')
+                        plt.xlim([min_pos, max_pos])
+                        plt.title('map = 1')
+
+                        plt.subplot(5, 2, 3)
+                        plt.plot(X_tr, ll[map0, :], '.')
+                        plt.xlim([min_pos, max_pos])
+                        plt.ylabel('likelihood')
+
+                        plt.subplot(5, 2, 4)
+                        plt.plot(X_tr, ll[map1, :], '.')
+                        plt.xlim([min_pos, max_pos])
+
+                        plt.subplot(5, 2, 5)
+                        plt.plot(X_tr, filt[0, map0, map1, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, filt[1, map0, map1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
+                        plt.ylabel('spec. filter')
                         plt.legend()
 
-                        plt.subplot(4, 1, 2)
-                        plt.plot(X_tr, filt[0, map0, map1, :], label='spec map filter')
-                        plt.legend()
+                        plt.subplot(5, 2, 6)
+                        plt.plot(X_tr, filt[0, map0, map1, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, filt[1, map0, map1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
 
-                        plt.subplot(4, 1, 3)
-                        plt.plot(X_tr, p_morph_filt[0, :], label='filter')
-                        plt.legend()
+                        plt.subplot(5, 2, 7)
+                        plt.plot(X_tr, p_morph_filt[0, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, p_morph_filt[1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
+                        plt.ylabel('filter')
 
-                        plt.subplot(4, 1, 4)
-                        plt.plot(X_tr, p_morph_smooth[0, :], label='smoother')
-                        plt.legend()
+                        plt.subplot(5, 2, 8)
+                        plt.plot(X_tr, p_morph_filt[0, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, p_morph_filt[1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
+
+                        plt.subplot(5, 2, 9)
+                        plt.plot(X_tr, p_morph_smooth[0, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, p_morph_smooth[1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
+                        plt.ylabel('smoother')
+
+                        plt.subplot(5, 2, 10)
+                        plt.plot(X_tr, p_morph_smooth[0, :], '.', color=blue1, label='env0')
+                        plt.plot(X_tr, p_morph_smooth[1, :], '.', color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
                         plt.show()
+
+            # write the following such that it shows all maps and observations, likelihood, filter and smoother values
+            ''' 
+            if debug2:  
+                print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
+                for map_id in range(self.map_model.M):
+                    print('map0={}, map1={}'.format(map0, map1))
+                    plt.subplot(5, 2, 1)
+                    map = self.observation_models[map0]
+                    plt.plot(map[0], map[5], '.', color=blue1)
+                    plt.plot(map[0], map[5] + 2*map[5]/np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(map[0], map[5] - 2*map[5]/np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(X_tr, Y_tr, 'r,')
+                    plt.xlim([min_pos, max_pos])
+                    plt.title('map = 0')
+                    plt.ylabel('fitted models')
+
+                    plt.subplot(5, 2, 2)
+                    map = self.observation_models[map1]
+                    plt.plot(map[0], map[5], '.', color=blue1)
+                    plt.plot(map[0], map[5] + 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(map[0], map[5] - 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(X_tr, Y_tr, 'r,')
+                    plt.xlim([min_pos, max_pos])
+                    plt.title('map = 1')
+
+                    plt.subplot(5, 2, 3)
+                    plt.plot(X_tr, ll[map0, :], '.')
+                    plt.xlim([min_pos, max_pos])
+                    plt.ylabel('likelihood')
+
+                    plt.subplot(5, 2, 4)
+                    plt.plot(X_tr, ll[map1, :], '.')
+                    plt.xlim([min_pos, max_pos])
+
+                    plt.subplot(5, 2, 5)
+                    plt.plot(X_tr, filt[0, map0, map1, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, filt[1, map0, map1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    plt.ylabel('spec. filter')
+                    plt.legend()
+
+                    plt.subplot(5, 2, 6)
+                    plt.plot(X_tr, filt[0, map0, map1, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, filt[1, map0, map1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+
+                    plt.subplot(5, 2, 7)
+                    plt.plot(X_tr, p_morph_filt[0, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_filt[1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    plt.ylabel('filter')
+
+                    plt.subplot(5, 2, 8)
+                    plt.plot(X_tr, p_morph_filt[0, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_filt[1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+
+                    plt.subplot(5, 2, 9)
+                    plt.plot(X_tr, p_morph_smooth[0, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_smooth[1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    plt.ylabel('smoother')
+
+                    plt.subplot(5, 2, 10)
+                    plt.plot(X_tr, p_morph_smooth[0, :], '.', color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_smooth[1, :], '.', color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    plt.show()
+            '''
+
 
     # shows different maps
     def show_models(self):
@@ -506,7 +619,7 @@ def compute_spline_Normal_dist(exp_id):
     np.save(os.getcwd() + '/Data/spline_Normal_dist_exp_' + str(exp_id) + '.npy', dis)
 
 
-def compute_M_single_cell(cell_id):
+def compute_M_single_cell(cell_id, E):
     morphs = np.concatenate((morph_0_trials, morph_1_trials), axis=0)
     # morphs = morph_1_trials
     G = nx.Graph()
@@ -527,19 +640,39 @@ def compute_M_single_cell(cell_id):
     # Using Louvain algorithm (throw away negative edges)
     partition = community_louvain.best_partition(G)
     clusters = dict()
-    rates = dict()  # shows the rate of env0 trials being assigned to each cluster
     for item in partition.items():
         tr_id = item[0]
         part = item[1]
-        if part not in rates.keys():
-            rates[part] = 0
-        if tr_id in morph_0_trials:
-            rates[part] = rates[part] + 1/morph_0_trials.shape[0]
         if part not in clusters.keys():
             clusters[part] = [tr_id]
         else:
             clusters[part].append(tr_id)
     num_clusters = max(clusters.keys())+1  # +1 because cluster ids are 0-based
+
+    # rates shows the P(E=e|A=a), i. e. for each map, what is the percent of each env
+    '''
+    rates = np.zeros(shape=[E, num_clusters])
+    for item in partition.items():
+        tr_id = item[0]
+        part = item[1]
+        if tr_id in morph_0_trials:
+            rates[0, part] += 1 / len(clusters[part])
+        if tr_id in morph_1_trials:
+            rates[1, part] += 1 / len(clusters[part])
+    print(rates)
+    '''
+
+    # rates shows the P(A=a|E=e), i. e. for each env, what is the percent of each map
+    rates = np.zeros(shape=[E, num_clusters])
+    for item in partition.items():
+        tr_id = item[0]
+        part = item[1]
+        if tr_id in morph_0_trials:
+            rates[0, part] += 1 / morph_0_trials.shape[0]
+        if tr_id in morph_1_trials:
+            rates[1, part] += 1 / morph_1_trials.shape[0]
+    print(rates)
+
     # Drawing the graph
     '''
     print(partition)
@@ -552,18 +685,28 @@ def compute_M_single_cell(cell_id):
     '''
     # Showing neural activity of trials that belong to different clusters
     '''
+    plt.subplot(2, 1, 1)
     print('number of detected different maps: {}'.format(num_clusters))
     cols = generate_n_colors(num_clusters)
     for j in range(num_clusters):
+        first_tr = False
         for tr_id in clusters[j]:
             plt.plot(activity_rates_all_morphs[cell_id, :, tr_id], color=cols[j])
+
+    # for j in range(num_clusters):
+    #     plt.subplot(num_clusters, 1, j+1)
+    #     for tr_id in clusters[j]:
+    #         plt.plot(activity_rates_all_morphs[cell_id, :, tr_id])
+    # plt.show()
+
+    plt.subplot(2, 1, 2)
+    cols = generate_n_colors(2)
+    for tr_id in morph_0_trials:
+        plt.plot(activity_rates_all_morphs[cell_id, :, tr_id], color=cols[0])
+    for tr_id in morph_1_trials:
+        plt.plot(activity_rates_all_morphs[cell_id, :, tr_id], color=cols[1])
     plt.show()
 
-    for j in range(num_clusters):
-        plt.subplot(num_clusters, 1, j+1)
-        for tr_id in clusters[j]:
-            plt.plot(activity_rates_all_morphs[cell_id, :, tr_id])
-    plt.show()
     '''
     # Using Girvan-Newman algorithm (throw away negative edges)
     '''
@@ -752,18 +895,15 @@ if mode == 'all':
     cells_under_study = range(ncells)  # choosing cells to work with
 
 # Making State_model, Map_model and Response_model for each cell
-'''
+# '''
 cell_models = dict()
 for cell_id in cells_under_study:
     print('cell_id = {}'.format(cell_id))
     new_state_model = state_model(input_E=2, input_q=0.35)
-    [M, clusters, rates] = compute_M_single_cell(cell_id)
+    [M, clusters, rates] = compute_M_single_cell(cell_id, E=2)
     new_map_model = map_model(M, new_state_model)
     new_map_prob = np.zeros(shape=[new_state_model.E, M])
-    for m in range(M):
-        new_map_prob[0, m] = rates[m]
-        new_map_prob[1, m] = 1-rates[m]
-    new_map_model.set_map_prob(new_map_prob)
+    new_map_model.set_map_prob(rates)
     new_response_model = response_model(cell_id, new_map_model, input_h=15)
     print('clusters = {}'.format(clusters))
     for cl in clusters.keys():
@@ -772,7 +912,7 @@ for cell_id in cells_under_study:
         new_response_model.fit_models(cl, clusters[cl])
     cell_models[cell_id] = new_response_model
 np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', cell_models)
-'''
+# '''
 cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
 
 for cell_id in cell_models.keys():
@@ -781,7 +921,7 @@ for cell_id in cell_models.keys():
     obv = r_model.observation_models[0]
     # r_model.show_models()
     # r_model.show_models2()
-    r_model.decode_morph(debug=True)
+    r_model.decode_morph(debug1=False, debug2=True)
 
 
 
