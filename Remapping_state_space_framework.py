@@ -365,7 +365,6 @@ class response_model:
                     plt.show()
             '''
 
-
     # shows different maps
     def show_models(self):
         for map_id in range(self.map_model.M):
@@ -767,14 +766,10 @@ spks = np.load(os.getcwd() + '/Data/suite2p' + str(exp_id) + '/plane0/spks.npy')
 ops = np.load(os.getcwd() + '/Data/suite2p' + str(exp_id) + '/plane0/ops.npy', allow_pickle=True)  # dictionary
 VRData = np.load(os.getcwd() + '/Data/VRData' + str(exp_id) + '.npy')  # timepoints by 20 features
 
-# Features of VRData along with column number (for exp1 and exp2 - Two Tower Timout data)
-# 0: time, 1: morph, 2: trialnum, 3: pos', 4: dz', 5: lick, 6, reward, 7: tstart,
-# 8: teleport, 9: rzone, 10: toutzone, 11: clickOn, 12: blockWalls, 13: towerJitter, 14: wallJitter,
-# 15: bckgndJitter, 16: sanning, 17: manrewards, 18: speed, 19: lick rate, 20: trial number
-# You can get the overal morph value by computing VRData[:, 1] + VRData[:, 12] + VRData[:, 13] + VRData[:, 14]
-
-
+# Cleaning the data
+'''
 # Deleting 8th predictor to make data sets for different experiments consistent and of the same size
+
 if exp_id in [3, 4]:
     VRData = np.delete(VRData, 8, axis=1)
 
@@ -800,6 +795,54 @@ F = np.delete(F, ind, 1)
 Fneu = np.delete(Fneu, ind, 1)
 spks = np.delete(spks, ind, 1)
 S = spks.T
+
+# Detecting first jump at start of trials and removing it
+
+for tr_id in range(len(set(VRData[:, 20]))):
+    print(tr_id)
+    ind = np.where(VRData[:, 20] == tr_id)[0]
+    # bad_ind = [x for x in np.arange(1, len(pos)) if np.abs(pos[x] - pos[x-1])>10]
+    bad_ind = np.max([x for x in ind if np.abs(VRData[x, 3] - VRData[x-1, 3]) > 10])
+    rem = [x for x in ind if x < bad_ind]
+    VRData = np.delete(VRData, rem, axis=0)
+    F = np.delete(F, rem, axis=1)
+    Fneu = np.delete(F, rem, axis=1)
+np.save(os.getcwd() + '/Data/VRData_clean' + str(exp_id) + '.npy', VRData)
+np.save(os.getcwd() + '/Data/F_clean' + str(exp_id) + '.npy', F)
+np.save(os.getcwd() + '/Data/Fneu_clean' + str(exp_id) + '.npy', Fneu)
+'''
+
+VRData = np.load(os.getcwd() + '/Data/VRData_clean' + str(exp_id) + '.npy')  # timepoints by 20 features
+F = np.load(os.getcwd() + '/Data/F_clean' + str(exp_id) + '.npy')  # timepoints by 20 features
+Fneu = np.load(os.getcwd() + '/Data/Fneu_clean' + str(exp_id) + '.npy')  # timepoints by 20 features
+
+# Features of VRData along with column number (for exp1 and exp2 - Two Tower Timout data)
+# 0: time, 1: morph, 2: trialnum, 3: pos', 4: dz', 5: lick, 6, reward, 7: tstart,
+# 8: teleport, 9: rzone, 10: toutzone, 11: clickOn, 12: blockWalls, 13: towerJitter, 14: wallJitter,
+# 15: bckgndJitter, 16: sanning, 17: manrewards, 18: speed, 19: lick rate, 20: trial number
+# You can get the overal morph value by computing VRData[:, 1] + VRData[:, 12] + VRData[:, 13] + VRData[:, 14]
+
+
+# Detecting data points with huge jump
+'''
+for i in range(1, VRData.shape[0]):
+    curr_time = VRData[i, 0]
+    prev_time = VRData[i-1, 0]
+    curr_pos = VRData[i, 3]
+    prev_pos = VRData[i-1, 3]
+    curr_tr = VRData[i, 20]
+    prev_tr = VRData[i-1, 20]
+    if curr_tr == prev_tr and np.abs(curr_pos - prev_pos) > 20:
+        print('tr_id = {}'.format(curr_tr))
+        print('prev_time = {}, curr_time = {}'.format(prev_time, curr_time))
+        print('prev_pos = {}, curr_pos = {}'.format(prev_pos, curr_pos))
+        print('trial of next data point is {}'.format(VRData[i+1, 20]))
+        pos = VRData[:, 3]
+        plt.plot(pos[i-20:i+20])
+        plt.show()
+print('end of inspection')
+x = input()
+'''
 
 #  Computing basic statistics of the data
 ncells = F.shape[0]  # number of cells
