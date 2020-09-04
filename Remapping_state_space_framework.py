@@ -159,8 +159,8 @@ class response_model:
     def decode_morph(self, debug1, debug2):
         trial_ids = range(ntrials)
         # trial_ids = morph_0_trials
+        self.p_morph = np.empty(shape=[ntrials, 7], dtype=object)
         for tr_id in trial_ids:
-            print('tr_id = {}'.format(tr_id))
             # print('computing likelihood for tr_id = {}'.format(tr_id))
             ind = np.where(VRData[:, 20] == tr_id)[0]
             X_tr = VRData[ind, :]
@@ -228,8 +228,12 @@ class response_model:
                     p_morph_smooth[0, i] = p_morph_filt[0, i] * ((1 - qq) * p_morph_smooth[0, i+1] / p_2step_0 + qq * p_morph_smooth[1, i + 1] / p_2step_1)
                     p_morph_smooth[1, i] = p_morph_filt[1, i] * ((1 - qq) * p_morph_smooth[1, i+1] / p_2step_1 + qq * p_morph_smooth[0, i + 1] / p_2step_0)
                     p_morph_smooth[:, i] = p_morph_smooth[:, i] / np.sum(p_morph_smooth[:, i])
+            L = np.exp(ll)
+            L = L/np.sum(L, axis=0)  # The Likelihood is normalized, while the log-likelihood (ll) is not.
+            self.p_morph[tr_id, :] = [X_tr, Y_tr, filt, p_morph_filt, p_morph_smooth, ll, L]
 
             if debug1:
+                print('tr_id = {}'.format(tr_id))
                 print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
                 for map0 in range(self.map_model.M):
                     for map1 in range(self.map_model.M):
@@ -297,7 +301,8 @@ class response_model:
                         plt.xlim([min_pos, max_pos])
                         plt.show()
 
-            if debug2:  
+            if debug2:
+                print('tr_id = {}'.format(tr_id))
                 print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
                 for map_id in range(self.map_model.M):
                     plt.subplot(6+self.map_model.M, self.map_model.M, map_id + 1)
@@ -355,8 +360,6 @@ class response_model:
                         plt.ylabel('env1')
 
                 plt.show()
-
-
             # '''
 
     # shows different maps
@@ -379,6 +382,96 @@ class response_model:
             for tr_id in morph_1_trials:
                 plt.plot(activity_rates_all_morphs[self.cell_id, :, tr_id], 'b,')
             plt.show()
+
+    def show_decoding_results(self, trial_by_trial, morph_by_morph):
+        trial_ids = range(ntrials)
+        if trial_by_trial:
+            for tr_id in trial_ids:
+                print('tr_id = {}'.format(tr_id))
+                [X_tr, Y_tr, filt, p_morph_filt, p_morph_smooth, ll, L] = self.p_morph[tr_id, :]
+                print('maps_prob: \n \t {}'.format(self.map_model.map_prob))
+                for map_id in range(self.map_model.M):
+                    plt.subplot(6 + self.map_model.M, self.map_model.M, map_id + 1)
+                    map = self.vis_observation_models[map_id]
+                    plt.plot(map[0], map[5], '.', color=blue1)
+                    plt.plot(map[0], map[5] + 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(map[0], map[5] - 2 * map[5] / np.sqrt(map[6]), '.', color=orange1)
+                    plt.plot(X_tr, Y_tr, 'r,')
+                    plt.xlim([min_pos, max_pos])
+                    plt.title('map = {}'.format(map_id))
+                    plt.ylabel('models')
+
+                    plt.subplot(6 + self.map_model.M, self.map_model.M, self.map_model.M + map_id + 1)
+                    plt.plot(X_tr, ll[map_id, :])
+                    plt.xlim([min_pos, max_pos])
+                    if map_id == 0:
+                        plt.ylabel('like')
+
+                    for new_map in range(self.map_model.M):
+                        plt.subplot(6 + self.map_model.M, self.map_model.M,
+                                    (2 + new_map) * self.map_model.M + map_id + 1)
+                        plt.plot(X_tr, filt[0, map_id, new_map, :], color=blue1, label='env0')
+                        plt.plot(X_tr, filt[1, map_id, new_map, :], color=orange1, label='env1')
+                        plt.xlim([min_pos, max_pos])
+                        if map_id == 0 and new_map == 0:
+                            plt.legend()
+
+                    plt.subplot(6 + self.map_model.M, self.map_model.M,
+                                (2 + self.map_model.M) * self.map_model.M + map_id + 1)
+                    plt.plot(X_tr, p_morph_filt[0, :], color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_filt[1, :], color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    if map_id == 0:
+                        plt.ylabel('filter')
+
+                    plt.subplot(6 + self.map_model.M, self.map_model.M,
+                                (3 + self.map_model.M) * self.map_model.M + map_id + 1)
+                    plt.plot(X_tr, p_morph_smooth[0, :], color=blue1, label='env0')
+                    plt.plot(X_tr, p_morph_smooth[1, :], color=orange1, label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    if map_id == 0:
+                        plt.ylabel('smooth')
+
+                    plt.subplot(6 + self.map_model.M, self.map_model.M,
+                                (4 + self.map_model.M) * self.map_model.M + map_id + 1)
+                    for trr in morph_0_trials:
+                        ind = np.where(VRData[:, 20] == trr)[0]
+                        plt.plot(VRData[ind, 3], F[self.cell_id, ind], '.', markersize=2, alpha=.1, color=blue1,
+                                 label='env0')
+                    plt.xlim([min_pos, max_pos])
+                    if map_id == 0:
+                        plt.ylabel('env0')
+
+                    plt.subplot(6 + self.map_model.M, self.map_model.M,
+                                (5 + self.map_model.M) * self.map_model.M + map_id + 1)
+                    for trr in morph_1_trials:
+                        ind = np.where(VRData[:, 20] == trr)[0]
+                        plt.plot(VRData[ind, 3], F[self.cell_id, ind], '.', markersize=2, alpha=.1, color=orange1,
+                                 label='env1')
+                    plt.xlim([min_pos, max_pos])
+                    if map_id == 0:
+                        plt.ylabel('env1')
+
+                plt.show()
+
+        if morph_by_morph:
+            morphs = [morph_0_trials, morph_d25_trials, morph_d50_trials, morph_d75_trials, morph_1_trials]
+            for j in range(len(morphs)):
+                tr_ids = morphs[j]
+                step = (max_pos - min_pos) / nbreaks
+                X_disc = np.arange(min_pos, max_pos, step) + step / 2
+                D = np.zeros(shape=[tr_ids.shape[0], X_disc.shape[0]])
+                for k in range(len(tr_ids)):
+                    tr_id = tr_ids[k]
+                    [X_tr, Y_tr, filt, p_morph_filt, p_morph_smooth, ll, L] = self.p_morph[tr_id, :]
+                    ind = find_nearest(X_tr, X_disc)
+                    D[k, :] = p_morph_smooth[0, ind]
+                plt.subplot(len(morphs), 1, j+1)
+                plt.imshow(D, aspect='auto', vmin=0, vmax=1)
+                plt.colorbar()
+            plt.show()
+
+
 
 def find_nearest(arr1, arr2):
     # For each element x of arr2, find the index of the closest element of arr1 to that.
@@ -954,13 +1047,29 @@ np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy
 # '''
 cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
 
+# Running filter/smooter for each cell to decode represented environment
+'''
 for cell_id in cell_models.keys():
     r_model = cell_models[cell_id]
     print('cell_id: {}'.format(cell_id))
     obv = r_model.observation_models[0]
     # r_model.show_models()
     # r_model.show_models2()
-    r_model.decode_morph(debug1=False, debug2=True)
+    r_model.decode_morph(debug1=False, debug2=False)
+'''
+np.save(os.getcwd() + '/Data/cell_models_' + mode + '_exp_' + str(exp_id) + '.npy', cell_models)
+cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
+
+# Visualizing the fitted models and decoded environment for each cell
+'''
+for cell_id in cell_models.keys():
+    r_model = cell_models[cell_id]
+    print('cell_id: {}'.format(cell_id))
+    obv = r_model.observation_models[0]
+    # r_model.show_models()
+    # r_model.show_models2()
+    r_model.show_decoding_results(trial_by_trial=False, morph_by_morph=True)
+'''
 
 
 
