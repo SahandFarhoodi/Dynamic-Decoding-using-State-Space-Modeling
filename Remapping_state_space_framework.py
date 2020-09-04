@@ -383,6 +383,7 @@ class response_model:
                 plt.plot(activity_rates_all_morphs[self.cell_id, :, tr_id], 'b,')
             plt.show()
 
+    # shows the decoding results
     def show_decoding_results(self, trial_by_trial, morph_by_morph):
         trial_ids = range(ntrials)
         if trial_by_trial:
@@ -471,6 +472,42 @@ class response_model:
                 plt.colorbar()
             plt.show()
 
+
+class population_model:
+    # name: name of the population model
+    def __init__(self, input_cell_ids, input_cell_mods):
+        self.name = "independent cells"
+        self.cell_ids = input_cell_ids
+        self.cell_mod = input_cell_mods  # this is a dictionary
+        if len(input_cell_ids) == 0:
+            print('WRNING: no cell in the population')
+
+    def decode_morph(self):
+        self.p_morph = np.empty(shape=[ntrials, 6], dtype=object)
+        trial_ids = range(ntrials)
+        for tr_id in trial_ids:
+            ind = np.where(VRData[:, 20] == tr_id)[0]
+            X_tr = self.cell_mods[self.cell_ids[0]].p_morph[tr_id, 0]
+            p_morph_filt_joint = np.zeros(shape=[2, X_tr.shape[0]])
+            L_morph_joint = np.zeros(shape=[2, X_tr.shape[0]])
+            ll_morph_joint = np.zeros(shape=[2, X_tr.shape[0]])
+
+            # Think about how you can generalize your studies for a population of cells, also talkk to Uri about it.
+            # for i in range(X_tr.shape[0]):
+            #     ll0 = 0
+            #     ll1 = 0
+            #     for cell_id in cells_under_study:
+            #         print('tr_id = {}, cell_id = {}'.format(tr_id, cell_id))
+            #         temp = p_morph[cell_id, tr_id, 5]
+            #         ll0 += temp[0, i]
+            #         ll1 += temp[1, i]
+            #     ll_morph_joint[:, i] = [ll0, ll1]
+            #     # Adding a constant for computational reasons (doesn't affect normalized log-likelihoods)
+            #     tmp = (ll0 + ll1) / 2
+            #     ll0 = ll0 - tmp
+            #     ll1 = ll1 - tmp
+            #     L0 = np.exp(ll0)
+            #     L1 = np.exp(ll1)
 
 
 def find_nearest(arr1, arr2):
@@ -826,7 +863,25 @@ def compute_M_single_cell(cell_id, E):
     return [num_clusters, clusters, rates]
 
 
-# def decode_morphs(exp_id, cell_id, tr_id):
+# def decode_morphs_joint(exp_id, cell_id, tr_id):
+
+def show_cells_activity(cell_ids):
+    # Add sorting of trials for each (cell, morph level) prior to plotting, to emphasize the existence of multiple
+    # spatial maps. You can use Louvain clusters to do so if you feel like it, or just use receptive fields.
+
+    print(activity_rates_morph_0.shape)
+    print(activity_rates_morph_d25.shape)
+    # morphs = [morph_0_trials, morph_d25_trials, morph_d50_trials, morph_d75_trials, morph_1_trials]
+    morphs = [morph_0_trials, morph_1_trials]
+    for k in range(len(cell_ids)):
+        cell_id = cell_ids[k]
+        for j in range(len(morphs)):
+            tr_ids = morphs[j]
+            plt.subplot(len(morphs), len(cell_ids), j*len(cell_ids)+k+1)
+            plt.imshow(activity_rates_all_morphs[cell_id, :, tr_ids], aspect='auto', vmin=0, vmax=2)
+            # plt.colorbar()
+    plt.show()
+
 
 ''' ------------------------------- Reading and cleaning data ------------------------------- '''
 
@@ -856,6 +911,12 @@ VRData = np.load(os.getcwd() + '/Data/VRData' + str(exp_id) + '.npy')  # timepoi
 # Cleaning the data
 '''
 # Deleting 8th predictor to make data sets for different experiments consistent and of the same size
+
+# Cell-specific activity normalization
+sampling_freq = 1546
+F = F / sampling_freq
+for i in range(F.shape[0]):
+    F[i, :] = F[i, :]/np.mean(F[i, :])
 
 if exp_id in [3, 4]:
     VRData = np.delete(VRData, 8, axis=1)
@@ -909,7 +970,7 @@ Fneu = np.load(os.getcwd() + '/Data/Fneu_clean' + str(exp_id) + '.npy')  # timep
 # 15: bckgndJitter, 16: sanning, 17: manrewards, 18: speed, 19: lick rate, 20: trial number
 # You can get the overal morph value by computing VRData[:, 1] + VRData[:, 12] + VRData[:, 13] + VRData[:, 14]
 
-# Detecting data points with huge jump
+# Checking to see if there is any data point with large jump
 '''
 for i in range(1, VRData.shape[0]):
     curr_time = VRData[i, 0]
@@ -939,7 +1000,6 @@ max_pos = np.ceil(max(VRData[:, 3]))  # largest position
 
 
 ''' ------------------------------- Encoding ------------------------------- '''
-
 # Extracting trials of each morph level
 morph_0_trials = morph_trials(0)  # 1-dim vector
 morph_d25_trials = morph_trials(0.25)
@@ -1027,7 +1087,7 @@ if mode == 'all':
     cells_under_study = range(ncells)  # choosing cells to work with
 
 # Making State_model, Map_model and Response_model for each cell
-# '''
+'''
 cell_models = dict()
 for cell_id in cells_under_study:
     print('cell_id = {}'.format(cell_id))
@@ -1044,7 +1104,7 @@ for cell_id in cells_under_study:
         new_response_model.fit_models(cl, clusters[cl])
     cell_models[cell_id] = new_response_model
 np.save(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', cell_models)
-# '''
+'''
 cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
 
 # Running filter/smooter for each cell to decode represented environment
@@ -1056,9 +1116,17 @@ for cell_id in cell_models.keys():
     # r_model.show_models()
     # r_model.show_models2()
     r_model.decode_morph(debug1=False, debug2=False)
-'''
 np.save(os.getcwd() + '/Data/cell_models_' + mode + '_exp_' + str(exp_id) + '.npy', cell_models)
+'''
 cell_models = np.load(os.getcwd() + '/Data/cell_models_' + mode +'_exp_' + str(exp_id) + '.npy', allow_pickle=True).item()
+
+
+''' ------------------------------- Visualizaton ------------------------------- '''
+
+# Showing the activity of cells (observe multiple maps)
+cell_ids = [220, 75, 56, 13]
+show_cells_activity(cell_ids)
+
 
 # Visualizing the fitted models and decoded environment for each cell
 '''
@@ -1070,6 +1138,8 @@ for cell_id in cell_models.keys():
     # r_model.show_models2()
     r_model.show_decoding_results(trial_by_trial=False, morph_by_morph=True)
 '''
+
+
 
 
 
